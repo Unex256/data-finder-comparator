@@ -9,7 +9,7 @@ import configparser
 import numpy as np
 from openpyxl import load_workbook
 
-from threading import Thread, Lock
+from threading import Thread, Event, Lock
 from queue import Queue, Empty
 import time
 
@@ -320,6 +320,7 @@ def settings_page():
     global column_index1
     global column_index2
     global threshold
+    global settings_changed
     # Get the column names from the DataFrames
     columns1 = df_search.columns.tolist()
     columns2 = df_data.columns.tolist()
@@ -368,6 +369,8 @@ def settings_page():
             row_index = values['table2'][0]
             window['text2'].update(columns2[row_index])
         elif event == 'Apply':
+            settings_changed.set()
+
             row_index = values['table1'][0]
             column_index1 = row_index
             config.set("settings", "column_index1", str(row_index))
@@ -484,10 +487,70 @@ def display_matches(dis_value, dis_matches):
                 print(f'Row {row_index} was clicked')
             elif event == '-SETTINGS-':
                 settings_page()
-                pass
 
 
 def process_value(queue):
+    #has a bug that gui thread is faster and grabs value that is still old after setting change
+    global global_table_row
+
+    global column_index1
+    global column_index2
+
+    global settings_changed
+
+    cfg_changed = False
+
+    if column_index1 >= df_search.shape[1]:
+        cfg_changed = True
+        column_index1 = 0
+        config.set("settings", "column_index1", str(column_index1))
+
+    if column_index2 >= df_data.shape[1]:
+        cfg_changed = True
+        column_index2 = 0
+        config.set("settings", "column_index2", str(column_index2))
+
+    if cfg_changed:
+        with open('config.ini', 'w') as configfile:
+            config.write(configfile)
+
+    # Get the column of data to process
+    data_column = df_search.iloc[:, column_index1]
+    # Initialize an index variable to keep track of the current position in the column
+    index = 0
+    # Use a while loop to process the column
+    while index < len(data_column):
+        # Get the current value from the column
+        value = data_column.iloc[index]
+        # Check if the settings have changed
+        if settings_changed.is_set():
+            with queue_lock:
+                # If the settings have changed, clear the queue
+                while not queue.empty():
+                    queue.get()
+                # Reset the index variable to start processing from the beginning of the column
+                index = 0
+                value = data_column.iloc[index]
+                # Reset the settings_changed event
+                settings_changed.clear()
+                # Add at least one item into the queue under the lock
+                matches = find_matches(value, df_data.iloc[:, column_index2].values.tolist(), 3)
+                matches[2].sort(key=lambda x: x[1])
+                queue.put((value, matches))
+                print(f"Matches are ready under lock for Value: {value}")
+                # Increment the index variable to move to the next value in the column
+                index += 1
+        else:
+            # If the settings have not changed, continue processing as normal
+            matches = find_matches(value, df_data.iloc[:, column_index2].values.tolist(), 3)
+            matches[2].sort(key=lambda x: x[1])
+            queue.put((value, matches))
+            print(f"Matches are ready for Value: {value}")
+            # Increment the index variable to move to the next value in the column
+            index += 1
+
+
+def process_value_legacy(queue):
     for value in df_search.iloc[:, column_index1]:
         matches = find_matches(value, df_data.iloc[:, column_index2].values.tolist(), 3)
         matches[2].sort(key=lambda x: x[1])
@@ -499,20 +562,26 @@ def process_value(queue):
 def gui_process(queue):
     folder_selection_screen()
     while True:
-        try:
-            item = queue.get()
-        except Empty:
-            continue
-        else:
-            print(f'Processing Value: {item[0]}')
-            queue.task_done()
-            action = display_matches(*item)
-            if action == "Confirm":
-                # do something
-                pass
-            elif action == "Skip":
-                # do something else
-                pass
+        with queue_lock:
+            try:
+                item = queue.get()
+                print("item got")
+            except Exception as e:
+                print(e)
+                continue
+
+        print(f'Processing Value: {item[0]}')
+        action = display_matches(*item)
+        queue.task_done()
+        if action == "Confirm":
+            # do something
+            pass
+        elif action == "Skip":
+            # do something else
+            pass
+
+
+queue_lock = Lock()
 
 
 def main_with_threading():
@@ -734,6 +803,7 @@ if __name__ == '__main__':
     global_table_row = 0
 
     if multithreading:
+        settings_changed = Event()
         main_with_threading()
     else:
         folder_selection_screen()
