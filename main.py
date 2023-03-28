@@ -128,6 +128,9 @@ def old_visual_levenshtein_distance(s: str, t: str) -> tuple:
 
 
 def visualise_differences(s1, s2):
+    # In case inputs are not strings
+    s1 = str(s1)
+    s2 = str(s2)
     # for testing: CH-S09FTXD-BL/SC CH-S09FTXAL-SC
     min_index = 0
     match_list = []
@@ -167,6 +170,9 @@ def visualise_differences(s1, s2):
 
 
 def levenshtein_distance(s: str, t: str) -> int:
+    # In case that values are not strings
+    s = str(s)
+    t = str(t)
     # Convert strings to lowercase
     s = re.sub(r'[^a-zA-Z0-9]', '', s.lower())
     t = re.sub(r'[^a-zA-Z0-9]', '', t.lower())
@@ -202,6 +208,8 @@ def find_matches(search_val, match_list, threshold=3):
     poor_best_list = []
 
     for i, match_val in enumerate(match_list):
+        if pd.isna(match_val):
+            continue
         distance = levenshtein_distance(search_val, match_val)
 
         if distance == 0:
@@ -220,6 +228,8 @@ def find_matches(search_val, match_list, threshold=3):
     else:
         # find the best match outside the threshold distance
         for i, match_val in enumerate(match_list):
+            if pd.isna(match_val):
+                continue
             distance = levenshtein_distance(search_val, match_val)
             if distance <= best_distance:
                 if distance < best_distance:
@@ -288,7 +298,11 @@ def colored_text(string, red_indices):
 
 
 def get_splices_with_indices(match_splices, match_indices, s2):
+    s2 = str(s2)
     result = []
+    if len(match_indices) == 0:
+        result.append((0, s2))
+        return result
     if match_indices[0][0] != 0:
         result.append((0, s2[:match_indices[0][0]]))
     for i in range(len(match_splices)):
@@ -383,13 +397,16 @@ def settings_page():
     window.close()
 
 
-def display_matches(dis_sku, dis_matches):
+def display_matches(dis_value, dis_matches):
+    if not any(len(lst) > 0 for lst in dis_matches):
+        print("Column does not contain anything")
+
     max_match_size = (30, 1)
     max_match_size_col = (253, 20)
     distance_size = (5, 1)
 
     layout = [[sg.Text("Search element")],
-              [sg.Text(dis_sku, size=max_match_size),
+              [sg.Text(dis_value, size=max_match_size),
                sg.Button("Confirm"),
                sg.Button("Skip")]]
 
@@ -397,7 +414,7 @@ def display_matches(dis_sku, dis_matches):
         layout.append([sg.HorizontalSeparator()])
         layout.append([sg.Text(match_type, size=max_match_size), sg.Text("Dist.")])
         for e, match in enumerate(dis_matches[i]):
-            match_splices, match_indices = visualise_differences(dis_sku, match[0])
+            match_splices, match_indices = visualise_differences(dis_value, match[0])
             splices_with_indices = get_splices_with_indices(match_splices, match_indices, match[0])
             column_element = [[]]
             for j, splice_with_index in enumerate(splices_with_indices):
@@ -470,13 +487,13 @@ def display_matches(dis_sku, dis_matches):
                 pass
 
 
-def process_sku(queue):
-    for sku in df_search["sku"]:
-        matches = find_matches(sku, df_data["sku"].values.tolist(), 3)
+def process_value(queue):
+    for value in df_search.iloc[:, column_index1]:
+        matches = find_matches(value, df_data.iloc[:, column_index2].values.tolist(), 3)
         matches[2].sort(key=lambda x: x[1])
 
-        queue.put((sku, matches))
-        print(f"Matches are ready for SKU: {sku}")
+        queue.put((value, matches))
+        print(f"Matches are ready for Value: {value}")
 
 
 def gui_process(queue):
@@ -487,7 +504,7 @@ def gui_process(queue):
         except Empty:
             continue
         else:
-            print(f'Processing SKU: {item[0]}')
+            print(f'Processing Value: {item[0]}')
             queue.task_done()
             action = display_matches(*item)
             if action == "Confirm":
@@ -510,7 +527,7 @@ def main_with_threading():
     gui_thread.start()
 
     matching_thread = Thread(
-        target=process_sku,
+        target=process_value,
         args=(queue,)
     )
     matching_thread.start()
@@ -535,8 +552,8 @@ def keep(df_index):
                 header=False)
 
 
-def replace(df_index, new_sku):
-    df_search.at[df_index, "sku"] = new_sku
+def replace(df_index, new_value):
+    df_search.at[df_index, column_index1] = new_value
     if not os.path.isfile("output.xlsx"):
         df_search.iloc[[df_index]].to_excel("output.xlsx", index=False)
     else:
@@ -556,11 +573,30 @@ def replace(df_index, new_sku):
 def main():
     global global_table_row
 
-    for df_index, sku in enumerate(df_search.iloc[:, 0]):
-        matches = find_matches(sku, df_data["sku"].values.tolist(), 3)
+    global column_index1
+    global column_index2
+
+    cfg_changed = False
+
+    if column_index1 >= df_search.shape[1]:
+        cfg_changed = True
+        column_index1 = 0
+        config.set("settings", "column_index1", str(column_index1))
+
+    if column_index2 >= df_data.shape[1]:
+        cfg_changed = True
+        column_index2 = 0
+        config.set("settings", "column_index2", str(column_index2))
+
+    if cfg_changed:
+        with open('config.ini', 'w') as configfile:
+            config.write(configfile)
+
+    for df_index, value in enumerate(df_search.iloc[:, column_index1]):
+        matches = find_matches(value, df_data.iloc[:, column_index2].values.tolist(), 3)
         matches[2].sort(key=lambda x: x[1])
 
-        action = display_matches(sku, matches)
+        action = display_matches(value, matches)
         print(action)
         if type(action) == str:
             if action == "Confirm":
@@ -582,10 +618,10 @@ def main():
 
 
 def create_table():
-    df = df_search.copy()
+    df = df_search.iloc[:, [column_index1]].copy()
     df.reset_index(inplace=True)
     df["index"] = df["index"] + 1
-    return sg.Table(df[["index", "sku"]].values.tolist(),
+    return sg.Table(df.values.tolist(),
                     headings=["index", "search_val"],
                     enable_events=True,
                     key='-GLOBAL_TABLE-',
