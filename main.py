@@ -230,7 +230,7 @@ def find_matches(search_val, match_list, threshold=3):
     return exact_matches, best_list, potential_matches_list, poor_best_list
 
 
-def visual_find_matches(search_val, match_list, threshold=3):
+def visual_find_matches(search_val, match_list):
     exact_matches = []
     best_list = []
     best_distance = float('inf')
@@ -301,8 +301,86 @@ def get_splices_with_indices(match_splices, match_indices, s2):
 
 
 def settings_page():
+    global out_1
+    global out_2
+    global column_index1
+    global column_index2
+    global threshold
+    # Get the column names from the DataFrames
+    columns1 = df_search.columns.tolist()
+    columns2 = df_data.columns.tolist()
 
-    pass
+    # Create the table data
+    table_data1 = [[col] for col in columns1]
+    table_data2 = [[col] for col in columns2]
+
+    # Create the layout
+    layout = [[sg.Text('Select a column from DataFrame 1:')],
+              [sg.Input(default_text=columns1[0], key='text1', size=(30, 0), disabled=True)],
+              [sg.Push(), sg.Table(values=table_data1, headings=['DataFrame 1'], key='table1', enable_events=True)],
+              [sg.Text('Select a column from DataFrame 2:')],
+              [sg.Input(default_text=columns2[0], key='text2', size=(30, 0), disabled=True)],
+              [sg.Push(), sg.Table(values=table_data2, headings=['DataFrame 2'], key='table2', enable_events=True)],
+              [sg.Button('Apply')]]
+
+    layout_right = [[sg.Text("Threshold for good matches")],
+                    [sg.Spin([i for i in range(1, 11)],
+                             initial_value=threshold,
+                             key='-THRESHOLD-',
+                             size=(20, 0))],
+                    [sg.Checkbox('Output DataFrame1',
+                     key='-OUT_1-',
+                     default=out_1)],
+                    [sg.Checkbox('Output DataFrame2',
+                     key='-OUT_2-',
+                     default=out_2)]]
+
+    layout = [[sg.Column(layout), sg.VerticalSeparator(), sg.Column(layout_right)]]
+
+    window = sg.Window('Settings', layout, finalize=True)
+
+    window["table1"].update(select_rows=[column_index1])
+    window["table2"].update(select_rows=[column_index2])
+
+    window['-THRESHOLD-'].update(threshold)
+
+    while True:
+        event, values = window.read()
+        print(event)
+        if event == 'table1':
+            row_index = values['table1'][0]
+            window['text1'].update(columns1[row_index])
+        elif event == 'table2':
+            row_index = values['table2'][0]
+            window['text2'].update(columns2[row_index])
+        elif event == 'Apply':
+            row_index = values['table1'][0]
+            column_index1 = row_index
+            config.set("settings", "column_index1", str(row_index))
+
+            row_index = values['table2'][0]
+            column_index2 = row_index
+            config.set("settings", "column_index2", str(row_index))
+
+            out_1 = values['-OUT_1-']
+            config.set("settings", "out_1", str(out_1))
+
+            out_2 = values['-OUT_2-']
+            config.set("settings", "out_2", str(out_2))
+
+            threshold = values['-THRESHOLD-']
+            config.set("settings", "threshold", str(threshold))
+
+            with open('config.ini', 'w') as configfile:
+                config.write(configfile)
+
+            window.close()
+            return True
+
+        elif event == sg.WIN_CLOSED:
+            break
+
+    window.close()
 
 
 def display_matches(dis_sku, dis_matches):
@@ -393,8 +471,8 @@ def display_matches(dis_sku, dis_matches):
 
 
 def process_sku(queue):
-    for sku in df_prices["sku"]:
-        matches = find_matches(sku, df["sku"].values.tolist(), 3)
+    for sku in df_search["sku"]:
+        matches = find_matches(sku, df_data["sku"].values.tolist(), 3)
         matches[2].sort(key=lambda x: x[1])
 
         queue.put((sku, matches))
@@ -442,7 +520,7 @@ def main_with_threading():
 
 def keep(df_index):
     if not os.path.isfile("output.xlsx"):
-        df_prices.iloc[[df_index]].to_excel("output.xlsx", index=False)
+        df_search.iloc[[df_index]].to_excel("output.xlsx", index=False)
     else:
         with pd.ExcelWriter(
                 "output.xlsx",
@@ -450,7 +528,7 @@ def keep(df_index):
                 mode='a',
                 if_sheet_exists='overlay') as writer:
             reader = pd.read_excel("output.xlsx")
-            df_prices.iloc[[df_index]].to_excel(
+            df_search.iloc[[df_index]].to_excel(
                 writer,
                 startrow=reader.shape[0] + 1,
                 index=False,
@@ -458,9 +536,9 @@ def keep(df_index):
 
 
 def replace(df_index, new_sku):
-    df_prices.at[df_index, "sku"] = new_sku
+    df_search.at[df_index, "sku"] = new_sku
     if not os.path.isfile("output.xlsx"):
-        df_prices.iloc[[df_index]].to_excel("output.xlsx", index=False)
+        df_search.iloc[[df_index]].to_excel("output.xlsx", index=False)
     else:
         with pd.ExcelWriter(
                 "output.xlsx",
@@ -468,7 +546,7 @@ def replace(df_index, new_sku):
                 mode='a',
                 if_sheet_exists='overlay') as writer:
             reader = pd.read_excel("output.xlsx")
-            df_prices.iloc[[df_index]].to_excel(
+            df_search.iloc[[df_index]].to_excel(
                 writer,
                 startrow=reader.shape[0] + 1,
                 index=False,
@@ -478,8 +556,8 @@ def replace(df_index, new_sku):
 def main():
     global global_table_row
 
-    for df_index, sku in enumerate(df_prices.iloc[:, 0]):
-        matches = find_matches(sku, df["sku"].values.tolist(), 3)
+    for df_index, sku in enumerate(df_search.iloc[:, 0]):
+        matches = find_matches(sku, df_data["sku"].values.tolist(), 3)
         matches[2].sort(key=lambda x: x[1])
 
         action = display_matches(sku, matches)
@@ -504,9 +582,14 @@ def main():
 
 
 def create_table():
-    df_prices.reset_index(inplace=True)
-    df_prices["index"] = df_prices["index"] + 1
-    return sg.Table(df_prices[["index", "sku"]].values.tolist(), headings=["index", "search_val"], enable_events=True, key='-GLOBAL_TABLE-', size=(0, 40))
+    df = df_search.copy()
+    df.reset_index(inplace=True)
+    df["index"] = df["index"] + 1
+    return sg.Table(df[["index", "sku"]].values.tolist(),
+                    headings=["index", "search_val"],
+                    enable_events=True,
+                    key='-GLOBAL_TABLE-',
+                    size=(0, 40))
 
 
 def folder_selection_screen():
@@ -515,9 +598,15 @@ def folder_selection_screen():
     global multithreading
 
     layout = [
-        [sg.Text('Select xlsx file:'), sg.Input(default_text=search_file, key='-FILE-'), sg.FileBrowse(file_types=(("Excel Files", "*.xlsx"),))],
-        [sg.Text('Select folder with xlsx files:'), sg.Input(default_text=data_folder, key='-FOLDER-'), sg.FolderBrowse()],
-        [sg.Checkbox('Enable multithreading', key='-MULTITHREADING-', default=multithreading), sg.Button('Submit')]]
+        [sg.Text('Select xlsx file:'), sg.Input(default_text=search_file, key='-FILE-'),
+         sg.FileBrowse(file_types=(("Excel Files", "*.xlsx"),))],
+        [sg.Text('Select folder with xlsx files:'),
+         sg.Input(default_text=data_folder, key='-FOLDER-'),
+         sg.FolderBrowse()],
+        [sg.Checkbox('Enable multithreading',
+                     key='-MULTITHREADING-',
+                     default=multithreading),
+         sg.Button('Submit')]]
 
     window = sg.Window('Browse Documents', layout)
 
@@ -571,31 +660,40 @@ if __name__ == '__main__':
     else:
         data_folder = config.get("pre_browse", "data_folder")
 
+    if config.get("settings", "out_1") == "True":
+        out_1 = True
+    else:
+        out_1 = False
+    if config.get("settings", "out_2") == "True":
+        out_2 = True
+    else:
+        out_2 = False
+
+    if int(config.get("settings", "column_index1")):
+        column_index1 = int(config.get("settings", "column_index1"))
+    else:
+        column_index1 = 0
+    if int(config.get("settings", "column_index2")):
+        column_index2 = int(config.get("settings", "column_index2"))
+    else:
+        column_index2 = 0
+
+    if int(config.get("settings", "threshold")):
+        threshold = int(config.get("settings", "threshold"))
+    else:
+        threshold = 0
+
     data_folder = config.get("pre_browse", "data_folder")
 
-    # df_prices = read_file_to_df(
-    #     r"C:\Users\manta\OneDrive\Stalinis kompiuteris\Termo\workspace\2023-03-21\sort.xlsx")
-    #
-    # df1 = read_file_to_df(
-    #     r"C:\Users\manta\OneDrive\Stalinis kompiuteris\Termo\workspace\2023-03-21\products-2023-03-21-offset-0-rows-3500.xlsx")
-    #
-    # df2 = read_file_to_df(
-    #     r"C:\Users\manta\OneDrive\Stalinis kompiuteris\Termo\workspace\2023-03-21\products-2023-03-21-offset-3500-rows-3500.xlsx")
-    #
-    # df = pd.concat([df1, df2])
+    df_search = read_file_to_df(search_file)
 
-    df_prices = read_file_to_df(search_file)
-
-    df = pd.DataFrame()
-
-    print(data_folder)
+    df_data = pd.DataFrame()
 
     data_files = os.listdir(data_folder)
-    print(data_folder)
     for file in data_files:
         path = f"{data_folder}/{file}"
         temp = pd.read_excel(path)
-        df = pd.concat([df, temp], ignore_index=True)
+        df_data = pd.concat([df_data, temp], ignore_index=True)
 
     global_table_row = 0
 
