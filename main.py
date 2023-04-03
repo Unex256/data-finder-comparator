@@ -369,7 +369,8 @@ def settings_page():
             row_index = values['table2'][0]
             window['text2'].update(columns2[row_index])
         elif event == 'Apply':
-            settings_changed.set()
+            if multithreading:
+                settings_changed.set()
 
             row_index = values['table1'][0]
             column_index1 = row_index
